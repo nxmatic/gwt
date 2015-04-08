@@ -1041,12 +1041,16 @@ public class SerializableTypeOracleBuilder {
      */
     TreeLogger localLogger =
         logger.branch(TreeLogger.WARN,
-            "Checking all subtypes of Object which qualify for serialization", null);
+            "Checking all subtypes of Object which qualify for serialization (FIXED)", null);
     JClassType[] allTypes = typeOracle.getJavaLangObject().getSubtypes();
     for (JClassType cls : allTypes) {
       if (isDeclaredSerializable(cls)) {
-        computeTypeInstantiability(localLogger, cls, TypePaths.createSubtypePath(parent, cls,
+	// FIX so that the order of classes is not important.
+	TypeInfoComputed tic = typeToTypeInfoComputed.get(cls);
+	if (tic == null || !tic.isPendingInstantiable()) {
+          computeTypeInstantiability(localLogger, cls, TypePaths.createSubtypePath(parent, cls,
             typeOracle.getJavaLangObject()), problems);
+        }
       }
     }
   }
