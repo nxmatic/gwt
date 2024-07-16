@@ -1,0 +1,124 @@
+name: Nix Development Environment Workflow
+
+on: [push, pull_request]
+
+defaults:
+  run:
+    working-directory: ./main
+
+jobs:
+
+  determine-runner:
+    defaults:
+      run:
+        working-directory: .
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.set-runner.outputs.runner }}
+    steps:
+      - id: set-runner
+        run: |
+          cat <<! | cut -c 3- | tee -a "$GITHUB_OUTPUT"
+            runner=${{ github.repository_owner == github.actor && 'self-hosted' || 'ubuntu-latest' }}
+          !
+
+  build:
+    needs: determine-runner
+    runs-on: ${{ needs.determine-runner.outputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: main
+
+      - name: Checkout GWT Tools
+        uses: actions/checkout@v3
+        with:
+          repository: gwtproject/tools
+          path: tools
+
+      - uses: ./main/.github/actions/nix-develop
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build distribution
+        run: |
+          : Print the toolchain versions
+          java --version
+          ant -version
+          : Build the distribution
+          ant dist-dev
+          : 
+          cat <<! | cut -c 3- | tee -a "${GITHUB_ENV}"
+            GWT_VERSION=${GWT_VERSION}
+          !
+        shell: nix develop --impure .devenv -c bash -xe -o pipefail {0}
+        env:
+          GWT_TOOLS: ${{ github.workspace }}/tools
+        id: build-artifacts
+
+      - name: Upload distribution
+        uses: actions/upload-artifact@v3
+        with:
+          name: gwt-${{ env.GWT_VERSION }}
+          path: ${{ github.workspace }}/main/build/dist
+          if-no-files-found: error
+
+  deploy:
+    needs: [determine-runner, build]
+    runs-on: ${{ needs.determine-runner.outputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: main
+
+      - uses: ./.github/actions/maven-deploy
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          server: |
+            id: github
+            username: ${{ github.actor }}
+            password: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ${{ needs.determine-runner.outputs.runner }}
+    needs: [determine-runner, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: main
+
+      - uses: ./.github/actions/maven-deploy
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          server: ${{ secrets.RELEASE_MAVEN_SERVER }}
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: true
+          prerelease: true
+
+      - name: Zip dist
+        run: zip -r dist.zip ./dist
+
+      - name: Upload Release Assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist.zip
+          asset_name: dist.zip
+          asset_content_type: application/zip
+
+
+
