@@ -6,3 +6,5 @@
 /build/
 # Generated poms
 /maven/poms/**/pom.xml
+# Local directory environments
+.envrc~*
