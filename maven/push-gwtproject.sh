@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env -S bash -x -o pipefail
 #
 # Pushes GWT artifacts to a local (the default) or remote maven repository
 # To push remote, set 2 env variables: GWT_MAVEN_REPO_URL and GWT_MAVEN_REPO_ID

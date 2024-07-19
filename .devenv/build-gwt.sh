@@ -1,4 +1,4 @@
-#!/usr/bin/env -S bash -ex -o pipefail
+#!/usr/bin/env -S bash -e -o pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$root" ]; then
@@ -22,13 +22,11 @@ if [ -z "$GWT_VERSION" ]; then
   exit 1
 fi
 
-if [ -z "$NIX_SYSTEM" ]; then
-  echo "Error: NIX_SYSTEM is not set" >&2
+if [ -z "$GIT_REV" ]; then
+  echo "Error: GIT_REV is not set" >&2
   exit 1
 fi
 
-echo "Building GWT version: $GWT_VERSION for system: $NIX_SYSTEM"
-exec nix build --out-link "${root}/.devenv/gwt" \
-  --override-input gwt-packages "path:${root}/gwt-packages" \
-  --override-input gwt-packages/nixpkgs "github:NixOS/nixpkgs/nixos-unstable" \
-  --expr "(builtins.getFlake \"${root}/gwt-packages\").packages.${NIX_SYSTEM}.gwt.override { finalGwtVersion = \"$GWT_VERSION\"; }"
+echo "Building GWT ${GWT_VERSION}:${GIT_REV} development distribution package version"
+
+exec nix build --impure --out-link "${root}/.devenv/dist/result" "${root}/.devenv/dist#gwt"

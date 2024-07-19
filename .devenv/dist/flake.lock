@@ -1,5 +1,18 @@
 {
   "nodes": {
+    "customMacrodefs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1,
+        "narHash": "sha256-hJRm1eDQ5lCfjWZd+e1pGB43tSZsfSpJTkdZ2YKJDDA=",
+        "path": "custom-macrodefs.xml",
+        "type": "path"
+      },
+      "original": {
+        "path": "custom-macrodefs.xml",
+        "type": "path"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -36,6 +49,7 @@
     },
     "root": {
       "inputs": {
+        "customMacrodefs": "customMacrodefs",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

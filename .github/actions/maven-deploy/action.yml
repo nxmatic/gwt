@@ -1,6 +1,12 @@
-name: 'Deploy Maven Artifacts'
-description: 'Deploy Maven artifacts to a repository'
+name: 'Push maven artifacts'
+description: 'Deploy maven artifacts to a remote repository'
 inputs:
+  working_directory:
+    description: 'calling workflow working directory'
+    default: '.'
+  distribution:
+    description: 'GWT distribution artifact descriptor in JSON format including (version, name)'
+    required: true
   server:
     description: 'Maven server configuration in YAML format'
     required: true
@@ -10,20 +16,35 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: ./.github/actions/nix-develop
+    - uses: ./main/.github/actions/nix-develop
       with:
         cachix_auth_token: ${{ inputs.cachix_auth_token }}
 
-    - name: Download GWT artifacts
-      uses: actions/download-artifact@v3
+    - name: Check GWT distribution availability
+      run: |
+        cat <<~ | cut -c 3- | tee -a "${GITHUB_OUTPUT}"
+          isAvailable=$( [[ -r "${GWT_DIST_FILE}" ]] && echo 'true' || echo 'false' )
+        ~
+        cat <<~ | cut -c 3- | tee -a "${GITHUB_ENV}"
+          GWT_DIST_FILE=${GWT_DIST_FILE}
+        ~
+      shell: bash -xe -o pipefail {0}
+      env:
+        GWT_DIST_FILE: |
+          ${{ steps.gwt-distribution-download.outputs.download-path }}/${{ fromJson(inputs.distribution).name }}
+      id: gwt-distribution-availability
+        
+    - name: Download GWT distribution
+      uses: actions/download-artifact@v4
       with:
-        name: dist
-        path: ./dist
+        name: ${{ fromJson(inputs.distribution).name }}
+        path: ${{ github.workspace }}/.artifacts
+      if: ${{ steps.gwt-distribution-availability.outputs.isAvailable != 'true' }}
+      id: gwt-distribution-download
 
     - name: Deploy artifacts
-      shell: nix develop .devenv#default -c bash -xe -o pipefail {0}
       env:
-        SERVER: ${{ inputs.maven_server_config }}
+        MAVEN_SERVER_CONFIG: ${{ inputs.server }}
       run: |
         : Update maven settings
         mkdir -p ~/.m2
@@ -32,17 +53,16 @@ runs:
         fi
 
         : Merge the new server into the existing settings
-        yq eval-all '
-          select(fileIndex == 0).settings.servers.server |= 
-            (if . == null then [] else . end) + 
-            [select(fileIndex == 1)] | 
-          select(fileIndex == 0)
-        ' <(yq --input-format=xml --output-format=yaml eval ~/.m2/settings.xml) <<<"${MAVEN_SERVER_CONFIG}" |
-          yq --input-format=yaml --output-format=xml eval . > ~/.m2/settings.xml
+        yq -p=yaml -o=xml ea '. as $item ireduce ({}; . *+ $item)' \
+          <( yq -o=yaml -p=xml ~/.m2/settings.xml ) \
+          <( yq -o=yaml -p=yaml --no-colors eval '{ "settings": { "servers": { "server": . } } }' <( echo "$MAVEN_SERVER_CONFIG" ) ) > ~/.m2/settings.xml.tmp
+        mv ~/.m2/settings.xml.tmp ~/.m2/settings.xml
 
-        : Extract and set environment variables
-        eval $(yq eval 'to_entries[] | "export GWT_MAVEN_REPO_" + (.key | upcase) + "=\"" + .value + "\""' <(echo "$MAVEN_SERVER_CONFIG"))
+        : Export the server configuration as environment variables
+        set -a
+        source <( yq -o=shell -p=yaml eval 'with_entries(select(.key == "id" or .key == "url") | {"key": "GWT_MAVEN_REPO_" + .key | upcase, "value": .value})' <<<"$MAVEN_SERVER_CONFIG" )
+        set +a
 
-        : Deploy the artifacts
-        ./maven/push-gwtproject.sh
-
+        : Push the artifacts
+        nix-push-gwt
+      shell: nix develop main/.devenv -c bash -xe -o pipefail {0}
