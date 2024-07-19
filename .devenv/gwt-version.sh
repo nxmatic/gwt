@@ -1,4 +1,5 @@
-#!/usr/bin/env bash -e -o pipefail
+
+#!/usr/bin/env -S bash -e -o pipefail
 
 process_branch_name() {
   local BRANCH_NAME=$1
