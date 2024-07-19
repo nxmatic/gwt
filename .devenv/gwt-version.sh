@@ -1,4 +1,4 @@
-#!/usr/bin/env bash -e -o pipefail
+#!/usr/bin/env -S bash -e -o pipefail
 
 process_branch_name() {
   local BRANCH_NAME=$1
@@ -18,6 +18,14 @@ if [ -n "$GITHUB_REF" ]; then
     refs/heads/*)
       process_branch_name "${GITHUB_REF#refs/heads/}"
       ;;
+    refs/pull/*)
+      if [ -n "$GITHUB_HEAD_REF" ]; then
+        process_branch_name "$GITHUB_HEAD_REF"
+      else
+        echo "Pull request detected, but GITHUB_HEAD_REF is not set" >&2
+        exit 1
+      fi
+      ;;
     *)
       echo "Unsupported GITHUB_REF: $GITHUB_REF" >&2
       exit 1
@@ -27,7 +35,11 @@ else
   if TAG=$(git describe --exact-match --tags HEAD 2>/dev/null); then
     echo "$TAG"
   else
-    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
-    process_branch_name "$BRANCH_NAME"
+    if [ -n "$GITHUB_HEAD_REF" ]; then
+      process_branch_name "$GITHUB_HEAD_REF"
+    else
+      BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+      process_branch_name "$BRANCH_NAME"
+    fi
   fi
 fi
