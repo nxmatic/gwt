@@ -26,7 +26,7 @@ runs:
       shell: bash -xe -o pipefail {0}
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v22
+      uses: cachix/install-nix-action@v27
       if: steps.setenv.outputs.nix-installed == 'false'
       with:
         nix_path: nixpkgs=channel:nixos-unstable
@@ -34,7 +34,7 @@ runs:
           experimental-features = nix-command flakes
 
     - name: Install Cachix
-      uses: cachix/cachix-action@v12
+      uses: cachix/cachix-action@v15
       with:
         name: gwt-nuxeo
         authToken: '${{ inputs.cachix_auth_token }}'
