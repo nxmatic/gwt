@@ -11,28 +11,31 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        computeGwtVersion = pkgs.writeScriptBin "gwt-version" (builtins.readFile ./gwt-version.sh);
-        buildGwtPackage = pkgs.writeScriptBin "nix-build-gwt" ''
-          #!/usr/bin/env -S bash -eu -o pipefail
-
-          # Execute the build-gwt.sh script
-          exec env NIX_SYSTEM="${system}" ${./build-gwt.sh} "$@"
-        '';
+        # scripts
+        computeGwtVersion = pkgs.writeScriptBin "nix-gwt-version" (builtins.readFile ./gwt-version.sh);
+        computeGitRev = pkgs.writeScriptBin "nix-git-rev" (builtins.readFile ./git-rev.sh);
+        buildGwtPackage = pkgs.writeScriptBin "nix-build-gwt" (builtins.readFile ./build-gwt.sh);
+        pushGwtPackage = pkgs.writeScriptBin "nix-push-gwt" (builtins.readFile ./push-gwt.sh);
+        # versions
         defaultGwtVersion = "0.0.0-dev";
         finalGwtVersion = if builtins.getEnv "GWT_VERSION" != "" then builtins.getEnv "GWT_VERSION" else defaultGwtVersion;
-
-        gwtTools = pkgs.callPackage ./gwt-packages/gwtTools.nix {
+        # git rev
+        defaultGitRev = "0000000";
+        finalGitRev = if builtins.getEnv "GIT_REV" != "" then builtins.getEnv "GIT_REV" else defaultGitRev;
+        # packages
+        gwtTools = pkgs.callPackage ./dist/tools.nix {
           inherit finalGwtVersion;
         };
-
-        gwt = pkgs.callPackage ./gwt-packages/gwt.nix {
-          inherit finalGwtVersion gwtTools;
+        gwt = pkgs.callPackage ./dist/gwt.nix {
+          inherit finalGwtVersion finalGitRev;
           jdk17 = pkgs.jdk17;
         };
-
-        mkDevShell = { gwtVersion ? null }:
+        # shells
+        mkDevShell = { gwtVersion ? null, gitRev ? null }:
           let
             effectiveGwtVersion = if gwtVersion != null then gwtVersion else finalGwtVersion;
+            effectiveGitRev = if gitRev != null then gitRev else finalGitRev;
+            shellHookContent = builtins.readFile ./shell-hook.sh;
           in pkgs.mkShell {
             buildInputs = with pkgs; [
               jdk17
@@ -40,18 +43,21 @@
               maven
               yq-go
               git
-              computeGwtVersion
+              gh
+              unixtools.column
               gwtTools
+              computeGwtVersion
+              computeGitRev
               buildGwtPackage
+              pushGwtPackage
             ];
 
             shellHook = ''
-              export GWT_VERSION="$([[ -d .git ]] && echo "$(gwt-version)" || echo "${effectiveGwtVersion}")"
-              export GWT_TOOLS="${gwtTools}"
-
-              echo "Using GWT tools from: $GWT_TOOLS"
-              echo "GWT version: $GWT_VERSION"
-              echo "To build the GWT package, run 'nix-build-gwt' in this directory."
+              export NIX_GWT_VERSION="${effectiveGwtVersion}"
+              export NIX_GWT_TOOLS="${gwtTools}"
+              export NIX_GIT_REV="${effectiveGitRev}"
+              
+              ${shellHookContent}
             '';
           };
       in
@@ -60,7 +66,7 @@
 
         devShells = {
           default = mkDevShell {};
-          withVersion = mkDevShell { gwtVersion = builtins.getEnv "GWT_VERSION"; };
+          withVersion = mkDevShell { gwtVersion = builtins.getEnv "GWT_VERSION"; gitRev = builtins.getEnv "GIT_REV"; };
         };
 
         packages = {

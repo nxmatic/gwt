@@ -8,3 +8,4 @@
 /maven/poms/**/pom.xml
 # Local directory environments
 .envrc~*
+.devenv/dist/result

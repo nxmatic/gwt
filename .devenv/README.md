@@ -48,7 +48,8 @@ You can package your GWT application using the provided build script:
 ### Directory Structure
 
 - `flake.nix`: The main Nix flake file that defines the development environment and packages.
-- `compute-gwt-version.sh`: A script to compute the current GWT version based on the project files.
+- `gwt-version.sh`: A script to compute the current GWT version based on the project files.
+- `git-rev.sh`: A script to compute the current git revision based on the project files.
 - `gwt-packages/flake.nix`: The flake file that defines the packages.
 - `gwt-packages/gwt.nix`: The derivation for the GWT package.
 - `gwt-packages/gwtTools.nix`: The derivation for the GWT tools package.
