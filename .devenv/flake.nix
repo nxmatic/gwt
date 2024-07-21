@@ -16,28 +16,35 @@
         computeGitRev = pkgs.writeScriptBin "nix-git-rev" (builtins.readFile ./git-rev.sh);
         buildGwtPackage = pkgs.writeScriptBin "nix-build-gwt" (builtins.readFile ./build-gwt.sh);
         pushGwtPackage = pkgs.writeScriptBin "nix-push-gwt" (builtins.readFile ./push-gwt.sh);
-        # versions
+        
+        # GWT version
         defaultGwtVersion = "0.0.0-dev";
-        finalGwtVersion = if builtins.getEnv "GWT_VERSION" != "" then builtins.getEnv "GWT_VERSION" else defaultGwtVersion;
-        # git rev
+        gwtVersion = builtins.getEnv "GWT_VERSION";
+        effectiveGwtVersion = if gwtVersion != "" then gwtVersion else defaultGwtVersion;
+        
+        # Git rev
         defaultGitRev = "0000000";
-        finalGitRev = if builtins.getEnv "GIT_REV" != "" then builtins.getEnv "GIT_REV" else defaultGitRev;
+        gitRev = builtins.getEnv "GIT_REV";
+        effectiveGitRev = if gitRev != "" then gitRev else defaultGitRev;
+        
         # packages
         gwtTools = pkgs.callPackage ./dist/tools.nix {
-          inherit finalGwtVersion;
+          gwtVersion = effectiveGwtVersion;
         };
         gwt = pkgs.callPackage ./dist/gwt.nix {
-          inherit finalGwtVersion finalGitRev;
+          gwtVersion = effectiveGwtVersion;
+          gitRev = effectiveGitRev;
           jdk17 = pkgs.jdk17;
         };
+        
         # shells
-        mkDevShell = { gwtVersion ? null, gitRev ? null }:
+        mkDevShell = { cachixAuthToken ? null }:
           let
-            effectiveGwtVersion = if gwtVersion != null then gwtVersion else finalGwtVersion;
-            effectiveGitRev = if gitRev != null then gitRev else finalGitRev;
+            effectiveCachixAuthToken = if cachixAuthToken != null then cachixAuthToken else builtins.getEnv "CACHIX_AUTH_TOKEN";
             shellHookContent = builtins.readFile ./shell-hook.sh;
           in pkgs.mkShell {
             buildInputs = with pkgs; [
+              cachix
               jdk17
               ant
               maven
@@ -53,9 +60,15 @@
             ];
 
             shellHook = ''
+              cachix use gwt-nuxeo
+              export CACHIX_AUTH_TOKEN="${effectiveCachixAuthToken}"
               export NIX_GWT_VERSION="${effectiveGwtVersion}"
               export NIX_GWT_TOOLS="${gwtTools}"
               export NIX_GIT_REV="${effectiveGitRev}"
+              
+              if [ -z "$CACHIX_AUTH_TOKEN" ]; then
+                echo "Warning: CACHIX_AUTH_TOKEN is not set. Cachix may not work correctly for private caches."
+              fi
               
               ${shellHookContent}
             '';
@@ -66,7 +79,9 @@
 
         devShells = {
           default = mkDevShell {};
-          withVersion = mkDevShell { gwtVersion = builtins.getEnv "GWT_VERSION"; gitRev = builtins.getEnv "GIT_REV"; };
+          withEnv = mkDevShell {
+            cachixAuthToken = builtins.getEnv "CACHIX_AUTH_TOKEN";
+          };
         };
 
         packages = {
