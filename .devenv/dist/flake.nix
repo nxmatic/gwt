@@ -15,10 +15,10 @@
         gwtVersion = builtins.getEnv "GWT_VERSION";
         gitRev = builtins.getEnv "GIT_REV";
 
-        mkGwtTools = { finalGwtVersion ? defaultGwtVersion }:
-          pkgs.callPackage ./tools.nix { inherit finalGwtVersion; };
+        mkGwtTools = { gwtVersion ? defaultGwtVersion }:
+          pkgs.callPackage ./tools.nix { inherit gwtVersion; };
 
-        mkGwt = { finalGwtVersion ? defaultGwtVersion, finalGitRev ? defaultGitRev }:
+        mkGwt = { gwtVersion ? defaultGwtVersion, gitRev ? defaultGitRev }:
           pkgs.callPackage ./gwt.nix {
             inherit gwtVersion gitRev;
             gwtTools = mkGwtTools { inherit gwtVersion; };
@@ -27,11 +27,11 @@
       {
         packages = {
           gwtTools = mkGwtTools { 
-            finalGwtVersion = if gwtVersion != "" then gwtVersion else defaultGwtVersion; 
+            gwtVersion = if gwtVersion != "" then gwtVersion else defaultGwtVersion; 
           };
           gwt = mkGwt { 
-            finalGwtVersion = if gwtVersion != "" then gwtVersion else defaultGwtVersion; 
-            finalGitRev = if gitRev != "" then gitRev else defaultGitRev;
+            gwtVersion = if gwtVersion != "" then gwtVersion else defaultGwtVersion; 
+            gitRev = if gitRev != "" then gitRev else defaultGitRev;
           };
         };
 

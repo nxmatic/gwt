@@ -1,8 +1,8 @@
-{ lib, stdenv, unzip, patch, rsync, jdk17, ant, git, which, coreutils, gnused, gnugrep, finalGwtVersion, finalGitRev, gwtTools, customMacrodefs }:
+{ lib, stdenv, unzip, patch, rsync, jdk17, ant, git, which, coreutils, gnused, gnugrep, gwtVersion, gitRev, gwtTools, customMacrodefs }:
 
 stdenv.mkDerivation {
   pname = "gwt";
-  version = finalGwtVersion;
+  version = gwtVersion;
 
   src = lib.cleanSourceWith {
     filter = name: type: let baseName = baseNameOf (toString name); in
@@ -35,8 +35,8 @@ stdenv.mkDerivation {
     runHook preBuild
 
     export GWT_TOOLS="${lib.escapeShellArg gwtTools}"
-    export GWT_VERSION="${finalGwtVersion}"
-    export GIT_REV="${finalGitRev}"
+    export GWT_VERSION="${gwtVersion}"
+    export GIT_REV="${gitRev}"
 
     echo "Building GWT $${GWT_VERSION}:$${GIT_REV} using GWT_TOOLS=$${GWT_TOOLS}"
 
