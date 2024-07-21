@@ -1,8 +1,8 @@
-{ stdenv, lib, fetchFromGitHub, finalGwtVersion }:
+{ stdenv, lib, fetchFromGitHub, gwtVersion }:
 
 stdenv.mkDerivation rec {
   pname = "gwtTools";
-  version = finalGwtVersion;
+  version = gwtVersion;
 
   src = fetchFromGitHub {
     owner = "gwtProject";
@@ -21,7 +21,7 @@ stdenv.mkDerivation rec {
   '';
 
   meta = {
-    description = "Toolchain for building GWT ${finalGwtVersion}";
+    description = "Toolchain for building GWT ${gwtVersion}";
     homepage = "https://github.com/gwtProject/tools";
     license = lib.licenses.asl20;
   };
