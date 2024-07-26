@@ -1,6 +1,19 @@
 name: Nix Development Environment Workflow
 
-on: [push, pull_request]
+on:
+  pull_request:
+    branches:
+      - 'main-nuxeo'
+  push:
+    branches:
+      - '*-nuxeo'
+    tags:
+      - '*-NX*'
+  workflow_dispatch:
+    inputs:
+      gwt_version:
+        description: 'GWT version to update to (tag in upstream GWT repo)'
+        required: true
 
 jobs:
 
@@ -18,14 +31,64 @@ jobs:
             runner=${{ github.repository_owner == github.actor && 'self-hosted' || 'ubuntu-latest' }}
           !
 
+  update-gwt-version:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Create new version branch with patch and workflow
+        env:
+          GWT_VERSION: ${{ github.event.inputs.gwt_version }}
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          
+          # Fetch the upstream GWT repository
+          git remote add upstream https://github.com/gwtproject/gwt.git
+          git fetch upstream
+          
+          # Fetch the main-nuxeo branch
+          git fetch origin main-nuxeo
+          
+          # Create a new branch from the GWT version tag
+          git checkout -b update-gwt-$GWT_VERSION upstream/$GWT_VERSION
+          
+          # Get the commit hashes of changes unique to main-nuxeo
+          UNIQUE_COMMITS=$(git log --format=%H upstream/$GWT_VERSION..origin/main-nuxeo)
+          
+          # Cherry-pick the unique commits
+          for commit in $UNIQUE_COMMITS; do
+            git cherry-pick $commit || {
+              echo "Failed to cherry-pick commit $commit. Manual intervention required."
+              git cherry-pick --abort
+              exit 1
+            }
+          done
+          
+          # Push the new branch
+          git push origin update-gwt-$GWT_VERSION
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v3
+        with:
+          title: "Update to GWT ${{ github.event.inputs.gwt_version }}"
+          body: "This PR updates the fork to GWT version ${{ github.event.inputs.gwt_version }} and applies the Nuxeo patches and workflow."
+          branch: update-gwt-${{ github.event.inputs.gwt_version }}
+          base: main-nuxeo
+
   build:
     needs: is-self-hosted
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     outputs:
       distribution: ${{ steps.build.outputs.distribution }}
     runs-on: ${{ needs.is-self-hosted.outputs.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Nix Development Environment
         uses: ./.github/actions/nix-develop
@@ -70,6 +133,7 @@ jobs:
 
   deploy:
     needs: [is-self-hosted, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main-nuxeo'
     runs-on: ${{ needs.is-self-hosted.outputs.runner }}
     steps:
       - name: Checkout
