@@ -1,46 +1,45 @@
 name: 'Push maven artifacts'
 description: 'Deploy maven artifacts to a remote repository'
 inputs:
-  working_directory:
-    description: 'calling workflow working directory'
-    default: '.'
-  distribution:
-    description: 'GWT distribution artifact descriptor in JSON format including (version, name)'
-    required: true
   server:
     description: 'Maven server configuration in YAML format'
     required: true
-  cachix_auth_token:
+  cachix-auth-token:
     description: 'Cachix auth token'
+    required: false
+  github-token:
+    description: 'GitHub token'
     required: false
 runs:
   using: "composite"
   steps:
-    - uses: ./main/.github/actions/nix-develop
+    - uses: ./.github/actions/nix-develop
       with:
-        cachix_auth_token: ${{ inputs.cachix_auth_token }}
-
-    - name: Check GWT distribution availability
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+        github-token: ${{ inputs.github-token }}
+        
+    - name: Delete artifacts
       run: |
-        cat <<~ | cut -c 3- | tee -a "${GITHUB_OUTPUT}"
-          isAvailable=$( [[ -r "${GWT_DIST_FILE}" ]] && echo 'true' || echo 'false' )
-        ~
+        gh extension install nxmatic/gh-maven # should go in flake later
+        gh maven delete org.gwtproject %
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
+
+    - name: Build the distribution and load the environment
+      run: |
+        : build the distribution
+        nix-build-gwt
+
+        : export the environment variables
+        GWT_DIST_NAME=gwt-${GWT_VERSION}.zip
+        GWT_DIST_FILE=$( realpath . )/.devenv/dist/result/${GWT_DIST_NAME}
+
         cat <<~ | cut -c 3- | tee -a "${GITHUB_ENV}"
+          GWT_VERSION=${GWT_VERSION}
+          GWT_DIST_NAME=${GWT_DIST_NAME}
           GWT_DIST_FILE=${GWT_DIST_FILE}
         ~
-      shell: bash -xe -o pipefail {0}
-      env:
-        GWT_DIST_FILE: |
-          ${{ steps.gwt-distribution-download.outputs.download-path }}/${{ fromJson(inputs.distribution).name }}
-      id: gwt-distribution-availability
-        
-    - name: Download GWT distribution
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ fromJson(inputs.distribution).name }}
-        path: ${{ github.workspace }}/.artifacts
-      if: ${{ steps.gwt-distribution-availability.outputs.isAvailable != 'true' }}
-      id: gwt-distribution-download
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
+      id: build
 
     - name: Deploy artifacts
       env:
@@ -65,4 +64,4 @@ runs:
 
         : Push the artifacts
         nix-push-gwt
-      shell: nix develop main/.devenv -c bash -xe -o pipefail {0}
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
