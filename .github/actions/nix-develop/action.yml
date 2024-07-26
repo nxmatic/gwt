@@ -1,8 +1,11 @@
 name: 'Setup GWT Dev Environment'
 description: 'Checks out GWT and GWT Tools, sets up Nix and Cachix'
 inputs:
-  cachix_auth_token:
+  cachix-auth-token:
     description: 'Cachix auth token'
+    required: true
+  github-token:
+    description: 'Github token'
     required: true
 runs:
   using: "composite"
@@ -21,11 +24,14 @@ runs:
         !
         cat <<! | cut -c 3- | tee -a "$GITHUB_ENV"
           NIX_PATH=$HOME/.nix-profile/bin
+          NIX_CONFIG=access-tokens = github.com=${GITHUB_TOKEN}
           CACHIX_AUTH_TOKEN=${CACHIX_AUTH_TOKEN}
+          GITHUB_TOKEN=${GITHUB_TOKEN}
         !
       shell: bash -xe -o pipefail {0}
       env:
-        CACHIX_AUTH_TOKEN: ${{ inputs.cachix_auth_token }}
+        CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
 
     - name: Install Nix
       uses: cachix/install-nix-action@v27
@@ -34,9 +40,3 @@ runs:
         nix_path: nixpkgs=channel:nixos-unstable
         extra_nix_config: |
           experimental-features = nix-command flakes
-
-    # - name: Install Cachix
-    #   uses: cachix/cachix-action@v15
-    #   with:
-    #     name: gwt-nuxeo
-    #     authToken: '${{ inputs.cachix_auth_token }}'
