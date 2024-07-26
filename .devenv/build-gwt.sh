@@ -1,5 +1,8 @@
 #!/usr/bin/env -S bash -e -o pipefail
 
+[[ -n "${RUNNER_DEBUG}" ]] &&
+  set -x
+
 root=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$root" ]; then
   echo "Error: Not in a Git repository" >&2

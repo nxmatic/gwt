@@ -1,5 +1,8 @@
 #!/usr/bin/env -S bash -e -o pipefail
 
+[[ -n "${RUNNER_DEBUG}" ]] &&
+  set -x
+
 set -a
 GWT_VERSION=$( [[ -d .git ]] && echo "$(nix-gwt-version)" || echo "${NIX_GWT_VERSION}" )
 GWT_TOOLS="${NIX_GWT_TOOLS}"

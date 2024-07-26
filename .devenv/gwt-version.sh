@@ -1,5 +1,7 @@
-
 #!/usr/bin/env -S bash -e -o pipefail
+
+[[ -n "${RUNNER_DEBUG}" ]] &&
+  set -x
 
 process_branch_name() {
   local BRANCH_NAME=$1
