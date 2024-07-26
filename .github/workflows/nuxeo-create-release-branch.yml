@@ -1,0 +1,80 @@
+on:
+  workflow_dispatch:
+    inputs:
+      gwt-version:
+        description: 'GWT version to update to (tag in upstream GWT repo)'
+        required: true
+      gha-runner-label:
+        description: 'GitHub runner label on which performing the jobs'
+        required: false
+        default: 'ubuntu-latest'
+jobs:
+  main:
+    runs-on: ${{ inputs.gha-runner-label }}
+    env:
+      GWT_VERSION: ${{ github.event.inputs.gwt-version }}
+      NUXEO_BRANCH: ${{ github.event.inputs.gwt-version }}-nuxeo
+      TEST_BRANCH: ${{ github.event.inputs.gwt-version }}-test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Nix Development Environment
+        uses: ./.github/actions/nix-develop
+        with:
+          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Create release branches and apply Nuxeo changes
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          # Check if upstream remote exists, if not add it
+          if ! git remote | grep -q '^upstream$'; then
+            git remote add upstream https://github.com/gwtproject/gwt.git
+          fi
+
+          # Fetch the upstream GWT repository and tags
+          git fetch upstream --tags
+
+          # Fetch the main-nuxeo branch
+          git fetch origin main-nuxeo
+
+          # Create and push the release branch based on the GWT version tag
+          git checkout -b $NUXEO_BRANCH $GWT_VERSION
+          git push origin $NUXEO_BRANCH
+
+          # Create a new branch for Nuxeo-specific changes
+          git checkout -b $TEST_BRANCH $NUXEO_BRANCH
+
+          # Cherry-pick Nuxeo-specific commits
+          if ! git cherry-pick upstream/main..origin/main-nuxeo; then
+            echo "Failed to cherry-pick Nuxeo-specific commits. Manual intervention required."
+            git cherry-pick --abort
+            exit 1
+          fi
+
+          # Push the Nuxeo-specific branch
+          git push origin $TEST_BRANCH
+
+        shell: /usr/bin/bash -ex -o pipefail {0}
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix develop .devenv -c bash -xe -o pipefail <<~
+            : Checking GitHub CLI authentication...
+            [[ -z "$GH_TOKEN" ]] && exit 1
+            gh auth status
+            : Listing accessible repositories...
+            gh repo list
+            : Creating pull request...
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$NUXEO_BRANCH" \
+              --head "$TEST_BRANCH" \
+              --title "Apply Nuxeo-specific changes to GWT $GWT_VERSION" \
+              --body "This PR applies Nuxeo-specific changes to the GWT $GWT_VERSION release. Please review the changes and merge if everything looks correct."
+          ~
