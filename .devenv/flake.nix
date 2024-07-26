@@ -4,10 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    gwt-packages.url = "path:./gwt-packages";
   };
 
-  outputs = { self, nixpkgs, flake-utils, gwt-packages }: 
+  outputs = { self, nixpkgs, flake-utils }: 
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -16,7 +15,26 @@
         computeGitRev = pkgs.writeScriptBin "nix-git-rev" (builtins.readFile ./git-rev.sh);
         buildGwtPackage = pkgs.writeScriptBin "nix-build-gwt" (builtins.readFile ./build-gwt.sh);
         pushGwtPackage = pkgs.writeScriptBin "nix-push-gwt" (builtins.readFile ./push-gwt.sh);
-        
+        shellHookScript = pkgs.writeTextFile {
+          name = "nix-shell-hook.rc";
+          text = builtins.readFile ./shell-hook.sh;
+        };
+
+        # Github Token
+        defaultGithubToken = "";
+        githubToken = builtins.getEnv "GITHUB_TOKEN";
+        effectiveGithubToken = if githubToken != "" then githubToken else defaultGithubToken;
+
+        # GH Token
+        ghToken = builtins.getEnv "GH_TOKEN";
+        effectiveGhToken = if ghToken != "" then ghToken else effectiveGithubToken;
+
+        # Cachix authentication token
+        defaultCachixAuthToken = "";
+        cachixAuthToken = builtins.getEnv "CACHIX_AUTH_TOKEN";
+        effectiveCachixAuthToken = if cachixAuthToken != "" then cachixAuthToken else defaultCachixAuthToken;
+
+
         # GWT version
         defaultGwtVersion = "0.0.0-dev";
         gwtVersion = builtins.getEnv "GWT_VERSION";
@@ -32,58 +50,58 @@
           gwtVersion = effectiveGwtVersion;
         };
         gwt = pkgs.callPackage ./dist/gwt.nix {
+          inherit gwtTools;
           gwtVersion = effectiveGwtVersion;
           gitRev = effectiveGitRev;
           jdk17 = pkgs.jdk17;
         };
         
         # shells
-        mkDevShell = { cachixAuthToken ? null }:
-          let
-            effectiveCachixAuthToken = if cachixAuthToken != null then cachixAuthToken else builtins.getEnv "CACHIX_AUTH_TOKEN";
-            shellHookContent = builtins.readFile ./shell-hook.sh;
-          in pkgs.mkShell {
-            buildInputs = with pkgs; [
-              cachix
-              jdk17
-              ant
-              maven
-              yq-go
-              git
-              gh
-              unixtools.column
-              gwtTools
-              computeGwtVersion
-              computeGitRev
-              buildGwtPackage
-              pushGwtPackage
-            ];
+        mkDevShell = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            cachix
+            jdk17
+            ant
+            maven
+            yq-go
+            git
+            gh
+            unixtools.column
+            gwtTools
+            computeGwtVersion
+            computeGitRev
+            buildGwtPackage
+            pushGwtPackage
+            shellHookScript
+          ];
 
-            shellHook = ''
-              cachix use gwt-nuxeo
-              export CACHIX_AUTH_TOKEN="${effectiveCachixAuthToken}"
-              export NIX_GWT_VERSION="${effectiveGwtVersion}"
-              export NIX_GWT_TOOLS="${gwtTools}"
-              export NIX_GIT_REV="${effectiveGitRev}"
-              
-              if [ -z "$CACHIX_AUTH_TOKEN" ]; then
-                echo "Warning: CACHIX_AUTH_TOKEN is not set. Cachix may not work correctly for private caches."
-              fi
-              
-              ${shellHookContent}
-            '';
-          };
+          shellHook = ''
+            cat <<! | cut -c 3-
+              Effective GitHub Token: ${effectiveGithubToken}
+              Effective GH Token: ${effectiveGhToken}
+              Effective Cachix Auth Token: ${effectiveCachixAuthToken}
+              Effective GWT Version: ${effectiveGwtVersion}
+              Effective GWT Tools: ${gwtTools}
+              Effective Git Rev: ${effectiveGitRev}
+            !
+            NIX_GITHUB_TOKEN="${effectiveGithubToken}"
+            NIX_GH_TOKEN="${effectiveGhToken}"
+            NIX_CACHIX_AUTH_TOKEN="${effectiveCachixAuthToken}"
+            NIX_GWT_VERSION="${effectiveGwtVersion}"
+            NIX_GWT_TOOLS="${gwtTools}"
+            NIX_GIT_REV="${effectiveGitRev}"
+
+            source ${shellHookScript}
+          '';
+        };
       in
       {
         apps.build-gwt = flake-utils.lib.mkApp { drv = buildGwtPackage; };
-
+        
         devShells = {
-          default = mkDevShell {};
-          withEnv = mkDevShell {
-            cachixAuthToken = builtins.getEnv "CACHIX_AUTH_TOKEN";
-          };
+          default = mkDevShell;
         };
-
+        
         packages = {
           inherit gwt gwtTools;
         };

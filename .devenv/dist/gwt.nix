@@ -1,4 +1,4 @@
-{ lib, stdenv, unzip, patch, rsync, jdk17, ant, git, which, coreutils, gnused, gnugrep, gwtVersion, gitRev, gwtTools, customMacrodefs }:
+{ lib, stdenv, unzip, patch, rsync, jdk17, ant, git, which, coreutils, gnused, gnugrep, gwtVersion, gitRev, gwtTools }:
 
 stdenv.mkDerivation {
   pname = "gwt";

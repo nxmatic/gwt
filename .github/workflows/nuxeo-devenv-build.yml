@@ -1,146 +1,121 @@
 name: Nix Development Environment Workflow
 
-on: [push, pull_request]
+on:
+  pull_request:
+    branches:
+      - 'main-nuxeo'
+  push:
+    branches:
+      - '*-nuxeo'
+    tags:
+      - '*-NX*'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  packages: write
+  pull-requests: write
 
 jobs:
 
   is-self-hosted:
-    defaults:
-      run:
-        working-directory: .
     outputs:
-      runner: ${{ steps.set-runner.outputs.runner }}
+      condition: ${{ steps.condition.outputs.value }}
+      label: ${{ steps.condition.outputs.label }}
     runs-on: ubuntu-latest
     steps:
-      - id: set-runner
+      - name: 
+        id: condition
         run: |
+          : Evaluate the self hosted condition
           cat <<! | cut -c 3- | tee -a "$GITHUB_OUTPUT"
-            runner=${{ github.repository_owner == github.actor && 'self-hosted' || 'ubuntu-latest' }}
+            value=${CONDITION}
+            label=$( ${CONDITION} && echo 'self-hosted' || echo 'ubuntu-latest' )
           !
+        env:
+          CONDITION: ${{ github.repository_owner == github.actor }}
+
+      - name: Delete previous workflow runs
+        uses: dmvict/clean-workflow-runs@v1
+        if: ${{ steps.condition.outputs.value }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          workflow_id: 'nuxeo-devenv-build.yml'
+          branch: ${{ github.ref_name }}
+          save_period: 1
+          save_min_runs_number: 1
 
   build:
-    needs: is-self-hosted
-    outputs:
-      distribution: ${{ steps.build.outputs.distribution }}
-    runs-on: ${{ needs.is-self-hosted.outputs.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Nix Development Environment
-        uses: ./.github/actions/nix-develop
-        with:
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - name: Check the package availability
-        run: |
-          cat <<~ | cut -c 3- | tee -a "${GITHUB_OUTPUT}"
-            isAvailable=$( nix store verify --impure .devenv/dist#gwt && echo 'true' || echo 'false' )
-          ~
-        shell: bash
-        id: package-availability
-
-      - name: Build package
-        if: ${{ steps.package-availability.outputs.isAvailable == 'false' }}
-        run: |
-          nix-build-gwt
-          cat <<~ | cut -c 3- | tee -a "${GITHUB_OUTPUT}"
-            distribution<<EOS
-            {
-              "version": "${GWT_VERSION}",
-              "name": "gwt-${GWT_VERSION}.zip",
-            }
-            EOS
-          ~
-          cat <<~ | cut -c 3- | tee -a "${GITHUB_ENV}"
-            GWT_VERSION=${GWT_VERSION}
-            GWT_DIST_FILE=$( realpath .devenv/dist/result/gwt-${GWT_VERSION}.zip )
-          ~
-        shell: nix develop .devenv -c bash -xe -o pipefail {0}
-        id: build
-
-      - name: Upload distribution
-        if: ${{ steps.package-availability.outputs.isAvailable == 'false' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ fromJson(steps.build.outputs.distribution).name }}
-          path: ${{ env.GWT_DIST_FILE }}
-          retention-days: 1
-          if-no-files-found: error
-
-  deploy:
-    needs: [is-self-hosted, build]
-    runs-on: ${{ needs.is-self-hosted.outputs.runner }}
+    needs: [ is-self-hosted ]
+    if: ${{ ! startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ needs.is-self-hosted.outputs.label }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: main
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Nix Development Environment
         uses: ./.github/actions/nix-develop
         with:
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - name: Cleanup packages
-        run: |
-          gh extension install nxmatic/gh-maven # should go in flake later
-          gh maven delete org.gwtproject %
-        shell: nix develop main/.devenv -c bash -xe -o pipefail {0}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Deploy maven artifacts in github packages
         uses: ./.github/actions/maven-deploy
         with:
-          working_directory: ./
-          distribution: ${{ needs.build.outputs.distribution }}
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           server: |
             id: github
             url: https://maven.pkg.github.com/${{ github.repository }}
             username: ${{ github.actor }}
             password: ${{ secrets.GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for failure investigation in debug mode on self hosted
+        if: |
+          failure() &&
+          runner.debug &&
+          needs.is-self-hosted.outputs.label == 'self-hosted'
+        run: |
+          : Waiting for failure investigation...
+          exec tail -f /dev/null
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [is-self-hosted, build]
-    runs-on: ${{ needs.is-self-hosted.outputs.runner }}
+    needs: [ is-self-hosted ]
+    runs-on: ${{ needs.is-self-hosted.outputs.label }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          path: main
 
-      - name: Set up Nix Development Environment
-        uses: ./.github/actions/nix-develop
+      - name: Deploy maven artifacts on nuxeo's nexus
+        uses: ./.github/actions/maven-deploy
         with:
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      - uses: ./.github/actions/maven-deploy
-        with:
-          working_directory: ./
-          distribution: ${{ needs.build.outputs.distribution }}
-          cachix_auth_token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           server: ${{ secrets.RELEASE_MAVEN_SERVER }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          files: ${{ env.GWT_DIST_FILE }}
+          name: Release ${{ github.ref_name }}
           draft: true
           prerelease: true
-
-      - name: Upload Release Assets
-        uses: actions/upload-release-asset@v1
+          body: |
+            Release of GWT version ${{ env.GWT_VERSION }}
+            
+            Please update this release note with relevant changes and information.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_name: ${{ fromJson(needs.build.outputs.distribution).name }}
-          asset_path: ${{ fromJson(needs.build.outputs.distribution).path }}
-          asset_content_type: application/zip
+
+      - name: Wait for failure investigation in debug mode on self hosted
+        if: |
+          failure() &&
+          runner.debug &&
+          needs.is-self-hosted.outputs.condition
+        run: |
+          : Waiting for failure investigation...
+          exec tail -f /dev/null
