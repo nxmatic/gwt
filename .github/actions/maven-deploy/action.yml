@@ -1,0 +1,67 @@
+name: 'Push maven artifacts'
+description: 'Deploy maven artifacts to a remote repository'
+inputs:
+  server:
+    description: 'Maven server configuration in YAML format'
+    required: true
+  cachix-auth-token:
+    description: 'Cachix auth token'
+    required: false
+  github-token:
+    description: 'GitHub token'
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - uses: ./.github/actions/nix-develop
+      with:
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+        github-token: ${{ inputs.github-token }}
+
+    - name: Delete artifacts
+      run: |
+        gh extension install nxmatic/gh-maven # should go in flake later
+        gh maven delete org.gwtproject %
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
+
+    - name: Build the distribution and load the environment
+      run: |
+        : build the distribution
+        nix-build-gwt
+
+        : export the environment variables
+        GWT_DIST_NAME=gwt-${GWT_VERSION}.zip
+        GWT_DIST_FILE=$( realpath . )/.devenv/dist/result/${GWT_DIST_NAME}
+
+        cat <<~ | cut -c 3- | tee -a "${GITHUB_ENV}"
+          GWT_VERSION=${GWT_VERSION}
+          GWT_DIST_NAME=${GWT_DIST_NAME}
+          GWT_DIST_FILE=${GWT_DIST_FILE}
+        ~
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
+      id: build
+
+    - name: Deploy artifacts
+      env:
+        MAVEN_SERVER_CONFIG: ${{ inputs.server }}
+      run: |
+        : Update maven settings
+        mkdir -p ~/.m2
+        if [ ! -f ~/.m2/settings.xml ]; then
+          echo '<settings><servers></servers></settings>' > ~/.m2/settings.xml
+        fi
+
+        : Merge the new server into the existing settings
+        yq -p=yaml -o=xml ea '. as $item ireduce ({}; . *+ $item)' \
+          <( yq -o=yaml -p=xml ~/.m2/settings.xml ) \
+          <( yq -o=yaml -p=yaml --no-colors eval '{ "settings": { "servers": { "server": . } } }' <( echo "$MAVEN_SERVER_CONFIG" ) ) > ~/.m2/settings.xml.tmp
+        mv ~/.m2/settings.xml.tmp ~/.m2/settings.xml
+
+        : Export the server configuration as environment variables
+        set -a
+        source <( yq -o=shell -p=yaml eval 'with_entries(select(.key == "id" or .key == "url") | {"key": "GWT_MAVEN_REPO_" + .key | upcase, "value": .value})' <<<"$MAVEN_SERVER_CONFIG" )
+        set +a
+
+        : Push the artifacts
+        nix-push-gwt
+      shell: nix develop .devenv -c bash -xe -o pipefail {0}
