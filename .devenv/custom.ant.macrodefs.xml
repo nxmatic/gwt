@@ -1,0 +1,22 @@
+<project name="custom-macrodefs">
+  <macrodef name="gwt.getgitinfo" description="Identifies the GIT info of a workspace">
+    <sequential>
+      <condition property="gwt.gitrev" value="${env.GIT_REV}" else="unknown">
+	<and>
+          <isset property="env.GIT_REV"/>
+          <not><equals arg1="${env.GIT_REV}" arg2=""/></not>
+	</and>
+      </condition>
+      <exec executable="git" searchpath="true" outputproperty="git.output" resultproperty="git.result" failifexecutionfails="false">
+	<arg line="rev-parse --short HEAD"/>
+      </exec>
+      <condition property="gwt.gitrev" value="${git.output}" else="${gwt.gitrev}">
+	<equals arg1="${git.result}" arg2="0"/>
+      </condition>
+      <echo message="Using Git revision: ${gwt.gitrev}"/>
+      <mkdir dir="${project.build}/sentinels"/>
+      <property name="filter.sentinel"
+		location="${project.build}/sentinels/gwt-${gwt.version}-git-${gwt.gitrev}"/>
+    </sequential>
+  </macrodef>
+</project>
