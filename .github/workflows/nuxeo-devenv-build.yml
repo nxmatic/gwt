@@ -1,0 +1,121 @@
+name: Nix Development Environment Workflow
+
+on:
+  pull_request:
+    branches:
+      - 'main-nuxeo'
+  push:
+    branches:
+      - '*-nuxeo'
+    tags:
+      - '*-NX*'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+
+  is-self-hosted:
+    outputs:
+      condition: ${{ steps.condition.outputs.value }}
+      label: ${{ steps.condition.outputs.label }}
+    runs-on: ubuntu-latest
+    steps:
+      - name:
+        id: condition
+        run: |
+          : Evaluate the self hosted condition
+          cat <<! | cut -c 3- | tee -a "$GITHUB_OUTPUT"
+            value=${CONDITION}
+            label=$( ${CONDITION} && echo 'self-hosted' || echo 'ubuntu-latest' )
+          !
+        env:
+          CONDITION: ${{ github.repository_owner == github.actor }}
+
+      - name: Delete previous workflow runs
+        uses: dmvict/clean-workflow-runs@v1
+        if: ${{ steps.condition.outputs.value }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          workflow_id: 'nuxeo-devenv-build.yml'
+          branch: ${{ github.ref_name }}
+          save_period: 1
+          save_min_runs_number: 1
+
+  build:
+    needs: [ is-self-hosted ]
+    if: ${{ ! startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ needs.is-self-hosted.outputs.label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Nix Development Environment
+        uses: ./.github/actions/nix-develop
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy maven artifacts in github packages
+        uses: ./.github/actions/maven-deploy
+        with:
+          server: |
+            id: github
+            url: https://maven.pkg.github.com/${{ github.repository }}
+            username: ${{ github.actor }}
+            password: ${{ secrets.GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for failure investigation in debug mode on self hosted
+        if: |
+          failure() &&
+          runner.debug &&
+          needs.is-self-hosted.outputs.label == 'self-hosted'
+        run: |
+          : Waiting for failure investigation...
+          exec tail -f /dev/null
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [ is-self-hosted ]
+    runs-on: ${{ needs.is-self-hosted.outputs.label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy maven artifacts on nuxeo's nexus
+        uses: ./.github/actions/maven-deploy
+        with:
+          server: ${{ secrets.RELEASE_MAVEN_SERVER }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.GWT_DIST_FILE }}
+          name: Release ${{ github.ref_name }}
+          draft: true
+          prerelease: true
+          body: |
+            Release of GWT version ${{ env.GWT_VERSION }}
+
+            Please update this release note with relevant changes and information.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for failure investigation in debug mode on self hosted
+        if: |
+          failure() &&
+          runner.debug &&
+          needs.is-self-hosted.outputs.condition
+        run: |
+          : Waiting for failure investigation...
+          exec tail -f /dev/null

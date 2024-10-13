@@ -1,0 +1,114 @@
+name: Create nuxeo release branch
+on:
+  workflow_dispatch:
+    inputs:
+      gwt-version:
+        description: 'GWT version to update to (tag in upstream GWT repo)'
+        required: true
+      gha-runner-label:
+        description: 'GitHub runner label on which performing the jobs'
+        required: false
+        default: 'ubuntu-latest'
+permissions: write-all
+jobs:
+  main:
+    runs-on: ${{ inputs.gha-runner-label }}
+    env:
+      GH_TOKEN: ${{ secrets.REPO_PAT || github.token }}
+      GWT_VERSION: ${{ github.event.inputs.gwt-version }}
+      NUXEO_RELEASE_BRANCH: nuxeo/release/${{ github.event.inputs.gwt-version }}
+      NUXEO_PRERELEASE_BRANCH: nuxeo/pre-release/${{ github.event.inputs.gwt-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          token: ${{ secrets.REPO_PAT || github.token }}
+
+      - name: Check if release branch exists
+        id: check_branch
+        run: |
+          cat <<~ | tee -a "${GITHUB_OUTPUT}"
+          exists=$( git ls-remote --exit-code --heads origin $NUXEO_RELEASE_BRANCH > /dev/null && echo 'true' || echo 'false' )
+          ~
+        shell: /usr/bin/bash -ex -o pipefail {0}
+
+      - name: Exit if branch exists
+        if: steps.check_branch.outputs.exists == 'true'
+        run: |
+          echo "Error: Release branch $NUXEO_RELEASE_BRANCH already exists."
+          echo "Please delete the following branches before running this workflow again:"
+          echo "- $NUXEO_RELEASE_BRANCH"
+          echo "- $NUXEO_PRERELEASE_BRANCH"
+          exit 1
+        shell: /usr/bin/bash -ex -o pipefail {0}
+
+      - name: Enable tmate session
+        if: runner.debug
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: true
+
+      - name: Set up Nix Development Environment
+        uses: ./.github/actions/nix-develop
+        with:
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release branches and apply Nuxeo changes
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          : Check if upstream remote exists, if not add it
+          if ! git remote | grep -q '^upstream$'; then
+            git remote add upstream https://github.com/gwtproject/gwt.git
+          fi
+
+          : Fetch the upstream and get the last common commit
+          git fetch upstream main
+          git fetch upstream tag $GWT_VERSION
+
+          COMMON_ANCESTOR=$(git merge-base HEAD upstream/main)
+
+          : Create and push the release branch based on the GWT version tag
+          git checkout -b $NUXEO_RELEASE_BRANCH $GWT_VERSION
+          git push -f origin $NUXEO_RELEASE_BRANCH
+
+          : Cherry-pick patch branch commits and push it
+          git checkout -b $NUXEO_PRERELEASE_BRANCH $NUXEO_RELEASE_BRANCH
+
+          : Create and apply patch, then create commit message
+          if git diff ${COMMON_ANCESTOR}..nuxeo/main |
+             tee >(git apply --quiet --whitespace=fix) >(grep -q .) > /dev/null; then
+            SQUASH_MSG=$(cat <<EOF | cut -c 3-
+            Squashed changes from nuxeo/main
+
+            Original commits:
+            $(git log --format="- %h: %s" $COMMON_ANCESTOR..nuxeo/main)
+          EOF
+            )
+          else
+            echo "No changes to apply or patch application failed."
+            exit 1
+          fi
+          git add .
+          git commit -m "$SQUASH_MSG"
+          git push -f origin $NUXEO_PRERELEASE_BRANCH
+        shell: /usr/bin/bash -ex -o pipefail {0}
+
+      - name: Create Pull Request
+        run: |
+          nix develop .devenv -c bash -xe -o pipefail <<~
+            : Checking GitHub CLI authentication...
+            [[ -z "$GH_TOKEN" ]] && exit 1
+            gh auth status
+            : Listing accessible repositories...
+            gh repo list
+            : Creating pull request...
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$NUXEO_RELEASE_BRANCH" \
+              --head "$NUXEO_PRERELEASE_BRANCH" \
+              --title "Apply Nuxeo-specific changes to GWT $GWT_VERSION" \
+              --body "This PR applies Nuxeo-specific changes to the GWT $GWT_VERSION release. Please review the changes and merge if everything looks correct."
+          ~
